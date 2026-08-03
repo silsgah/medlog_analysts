@@ -11,7 +11,8 @@ import {
   AlertCircle, 
   ShieldCheck,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Key
 } from 'lucide-react';
 
 interface ChatMessage {
@@ -24,6 +25,7 @@ interface ChatMessage {
   businessImpact?: string;
   recommendedActions?: string[];
   sqlQuery?: string;
+  error?: string;
 }
 
 export default function ChatPage() {
@@ -61,15 +63,16 @@ export default function ChatPage() {
     setLoading(true);
 
     try {
-      // Call backend REST endpoint
+      // Call backend REST API endpoint
       const res = await fetch('/api/v1/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: q }),
       });
 
+      const data = await res.json();
+
       if (res.ok) {
-        const data = await res.json();
         const insight = data.insight;
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
@@ -84,32 +87,23 @@ export default function ChatPage() {
         };
         setMessages((prev) => [...prev, assistantMsg]);
       } else {
-        // Mock fallback if API backend server isn't running live during frontend demonstration
-        setTimeout(() => {
-          const mockMsg: ChatMessage = {
-            id: (Date.now() + 1).toString(),
-            role: 'assistant',
-            content: 'Analysis complete for your request.',
-            finding: 'Cash withdrawals increased by 41% over the past 30 days.',
-            confidence: 'High',
-            evidence: [
-              '112 withdrawals recorded this month (historical 3-month average: 79)',
-              'Only 38% of withdrawals have linked customer payment receipts',
-              'Branch Takoradi accounts for 48% of total unlinked cash withdrawals',
-            ],
-            businessImpact: 'High risk of cash leakage or delayed customer posting affecting cash flow reconciliation.',
-            recommendedActions: [
-              'Review top 10 cash withdrawals above GHS 15,000 threshold',
-              'Verify customer payment posting logs for Branch Takoradi',
-              'Enforce mandatory payment receipt attachment rule',
-            ],
-            sqlQuery: `SELECT \n  b.BranchName,\n  COUNT(w.WithdrawalID) AS TotalWithdrawals,\n  SUM(w.Amount) AS TotalAmount\nFROM tblWithdrawal w\nJOIN tblBranch b ON w.BranchID = b.BranchID\nWHERE w.WithdrawalDate >= DATEADD(day, -30, GETDATE())\nGROUP BY b.BranchName\nORDER BY TotalAmount DESC;`,
-          };
-          setMessages((prev) => [...prev, mockMsg]);
-        }, 1200);
+        const errorDetail = data.detail || data.error || 'AI Provider API key or connection not configured.';
+        const assistantMsg: ChatMessage = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `⚠️ API Error: ${errorDetail}`,
+          error: errorDetail,
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      const assistantMsg: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `⚠️ Connection Error: Unable to reach AI Copilot backend API (${e.message || e})`,
+        error: e.message,
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
     } finally {
       setLoading(false);
     }
@@ -148,10 +142,26 @@ export default function ChatPage() {
             <div className={`max-w-3xl rounded-2xl p-5 ${
               msg.role === 'user' 
                 ? 'bg-indigo-600 text-white rounded-tr-none' 
+                : msg.error
+                ? 'bg-rose-950/30 border border-rose-500/40 text-rose-200 rounded-tl-none space-y-3'
                 : 'glass-panel border-white/10 text-gray-200 rounded-tl-none space-y-4'
             }`}>
               {msg.role === 'user' ? (
                 <p className="text-sm font-medium">{msg.content}</p>
+              ) : msg.error ? (
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2 font-bold text-rose-400 text-sm">
+                    <AlertCircle className="w-4 h-4" /> AI Provider API Key Required
+                  </div>
+                  <p className="text-gray-300 leading-relaxed">{msg.content}</p>
+                  <div className="mt-3 p-3 rounded-xl bg-slate-900 border border-white/10 text-gray-400 space-y-1">
+                    <p className="font-semibold text-white flex items-center gap-1.5">
+                      <Key className="w-4 h-4 text-amber-400" /> How to fix:
+                    </p>
+                    <p>1. Add <code className="text-cyan-300 font-mono">OPENAI_API_KEY</code>, <code className="text-cyan-300 font-mono">GEMINI_API_KEY</code>, or <code className="text-cyan-300 font-mono">ANTHROPIC_API_KEY</code> to your Vercel Environment Variables.</p>
+                    <p>2. Or configure your API key on the <a href="/settings" className="text-indigo-400 hover:underline font-semibold">Platform Settings</a> page.</p>
+                  </div>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {/* General message or simple intro */}
@@ -255,7 +265,7 @@ export default function ChatPage() {
             </div>
             <div className="p-4 rounded-2xl glass-panel text-xs text-indigo-300 flex items-center gap-2">
               <Sparkles className="w-4 h-4 animate-spin" />
-              <span>Analyzing SQL Server database and constructing evidence-backed insight...</span>
+              <span>Querying LLM & SQL Server to construct evidence-backed response...</span>
             </div>
           </div>
         )}
