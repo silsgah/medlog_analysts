@@ -9,6 +9,7 @@ import {
   FileText, 
   AlertTriangle, 
   Database, 
+  Settings,
   Activity, 
   ShieldCheck 
 } from 'lucide-react';
@@ -19,6 +20,7 @@ const navItems = [
   { href: '/reports', label: 'Executive Intelligence', icon: FileText },
   { href: '/alerts', label: 'Alerts & Anomalies', icon: AlertTriangle },
   { href: '/discovery', label: 'Knowledge Graph', icon: Database },
+  { href: '/settings', label: 'Platform Settings', icon: Settings },
 ];
 
 export default function Navigation() {

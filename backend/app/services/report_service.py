@@ -49,6 +49,7 @@ class ReportService:
         self,
         tenant_id: str | None = None,
         send_email: bool = True,
+        recipients: list[str] | None = None,
     ) -> ExecutiveReport:
         """Generate the Daily Executive Intelligence Report."""
         logger.info("Generating daily executive report", tenant_id=tenant_id)
@@ -95,6 +96,7 @@ class ReportService:
             await self._email.send_report_email(
                 subject=f"📊 Daily Executive Intelligence — Health Score: {health.score}/100",
                 html_content=html,
+                recipients=recipients,
             )
 
         logger.info(

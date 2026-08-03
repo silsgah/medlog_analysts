@@ -18,6 +18,7 @@ class ReportRequest(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
     send_email: bool = False
+    recipients: list[str] | None = None
 
 
 @router.post("/generate")
@@ -29,7 +30,8 @@ async def generate_report(request: ReportRequest):
     try:
         if request.report_type == ReportType.DAILY_EXECUTIVE:
             report = await container.report_service.generate_daily_report(
-                send_email=request.send_email
+                send_email=request.send_email,
+                recipients=request.recipients,
             )
         else:
             if not request.start_date or not request.end_date:
