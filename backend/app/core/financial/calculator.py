@@ -2,7 +2,7 @@
 AI Freight Copilot — Financial KPI Calculator.
 
 Calculates all financial metrics from the ERP database,
-including period-over-period comparisons and business health scores.
+including period-over-period comparisons, currency parsing, and business health scores.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 
 import structlog
 
+from app.core.anomaly.detector import parse_float
 from app.core.financial.metrics import METRIC_DEFINITIONS, MetricDefinition, TableMapping
 from app.domain.entities import (
     BusinessHealthScore,
@@ -111,7 +112,7 @@ class FinancialCalculator:
 
         current_value = 0.0
         if result.rows and not result.error:
-            current_value = float(result.rows[0].get("value", 0) or 0)
+            current_value = parse_float(result.rows[0].get("value"))
 
         # Execute previous period query for comparison
         previous_value: float | None = None
@@ -135,7 +136,7 @@ class FinancialCalculator:
         )
 
         if prev_result.rows and not prev_result.error:
-            previous_value = float(prev_result.rows[0].get("value", 0) or 0)
+            previous_value = parse_float(prev_result.rows[0].get("value"))
             if previous_value and previous_value != 0:
                 change_percent = ((current_value - previous_value) / abs(previous_value)) * 100
                 if change_percent > 2:
@@ -237,9 +238,9 @@ class FinancialCalculator:
         query = f"""
             SELECT 
                 b.BranchName,
-                ISNULL(SUM(i.TotalAmount), 0) AS revenue,
+                ISNULL(SUM({self._mapping.safe_numeric_expr("i." + self._mapping.invoice_amount_col)}), 0) AS revenue,
                 ISNULL((
-                    SELECT SUM(e.Amount) 
+                    SELECT SUM({self._mapping.safe_numeric_expr("e." + self._mapping.expense_amount_col)}) 
                     FROM {self._mapping.expense_table} e 
                     WHERE e.BranchID = b.BranchID 
                     AND e.{self._mapping.expense_date_column} BETWEEN :start_date AND :end_date
@@ -262,8 +263,8 @@ class FinancialCalculator:
         if result.rows and not result.error:
             for row in result.rows:
                 branch_name = row.get("BranchName", "Unknown")
-                revenue = float(row.get("revenue", 0))
-                expenses = float(row.get("expenses", 0))
+                revenue = parse_float(row.get("revenue"))
+                expenses = parse_float(row.get("expenses"))
                 profit = revenue - expenses
 
                 branch_metrics[branch_name] = MetricValue(

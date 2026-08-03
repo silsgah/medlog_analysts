@@ -3,6 +3,7 @@ AI Freight Copilot — Financial Metric Definitions.
 
 Defines all financial KPIs, their SQL calculation queries,
 and business interpretation rules.
+Includes safe T-SQL numeric casting for columns containing currency prefixes or formatting.
 """
 
 from __future__ import annotations
@@ -37,10 +38,6 @@ class MetricDefinition:
     critical_threshold: float | None = None
     health_weight: float = 0.0  # Weight in health score (0-1)
 
-    def get_trend_query(self, periods: int = 12) -> str:
-        """Get query for trend analysis over multiple periods."""
-        return self.query_template  # Subclasses can override
-
 
 # ── Standard Financial Metrics ───────────────────────────────────────────────
 
@@ -52,12 +49,12 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         unit="currency",
         description="Total revenue from invoices in the period",
         query_template="""
-            SELECT ISNULL(SUM(TotalAmount), 0) AS value
+            SELECT ISNULL(SUM({invoice_amount_expr}), 0) AS value
             FROM {invoice_table}
             WHERE {date_column} BETWEEN :start_date AND :end_date
         """,
         comparison_query_template="""
-            SELECT ISNULL(SUM(TotalAmount), 0) AS value
+            SELECT ISNULL(SUM({invoice_amount_expr}), 0) AS value
             FROM {invoice_table}
             WHERE {date_column} BETWEEN :prev_start_date AND :prev_end_date
         """,
@@ -71,8 +68,8 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         unit="currency",
         description="Revenue minus direct costs",
         query_template="""
-            SELECT ISNULL(SUM(TotalAmount), 0) - ISNULL(
-                (SELECT SUM(Amount) FROM {expense_table} 
+            SELECT ISNULL(SUM({invoice_amount_expr}), 0) - ISNULL(
+                (SELECT SUM({expense_amount_expr}) FROM {expense_table} 
                  WHERE {expense_date_column} BETWEEN :start_date AND :end_date
                  AND Category IN ('Direct Cost', 'COGS', 'Freight Cost')), 0
             ) AS value
@@ -90,9 +87,9 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         description="Revenue minus all expenses",
         query_template="""
             SELECT 
-                ISNULL((SELECT SUM(TotalAmount) FROM {invoice_table} 
+                ISNULL((SELECT SUM({invoice_amount_expr}) FROM {invoice_table} 
                         WHERE {date_column} BETWEEN :start_date AND :end_date), 0)
-                - ISNULL((SELECT SUM(Amount) FROM {expense_table} 
+                - ISNULL((SELECT SUM({expense_amount_expr}) FROM {expense_table} 
                           WHERE {expense_date_column} BETWEEN :start_date AND :end_date), 0)
             AS value
         """,
@@ -107,9 +104,9 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         description="Cash received minus cash paid out",
         query_template="""
             SELECT 
-                ISNULL((SELECT SUM(Amount) FROM {receipt_table} 
+                ISNULL((SELECT SUM({receipt_amount_expr}) FROM {receipt_table} 
                         WHERE {receipt_date_column} BETWEEN :start_date AND :end_date), 0)
-                - ISNULL((SELECT SUM(Amount) FROM {withdrawal_table} 
+                - ISNULL((SELECT SUM({withdrawal_amount_expr}) FROM {withdrawal_table} 
                           WHERE {withdrawal_date_column} BETWEEN :start_date AND :end_date), 0)
             AS value
         """,
@@ -125,12 +122,12 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         description="Operating profit as percentage of revenue",
         query_template="""
             SELECT CASE 
-                WHEN ISNULL(SUM(i.TotalAmount), 0) = 0 THEN 0
+                WHEN ISNULL(SUM({invoice_amount_expr}), 0) = 0 THEN 0
                 ELSE (
-                    (ISNULL(SUM(i.TotalAmount), 0) - ISNULL((
-                        SELECT SUM(Amount) FROM {expense_table} 
+                    (ISNULL(SUM({invoice_amount_expr}), 0) - ISNULL((
+                        SELECT SUM({expense_amount_expr}) FROM {expense_table} 
                         WHERE {expense_date_column} BETWEEN :start_date AND :end_date
-                    ), 0)) * 100.0 / ISNULL(SUM(i.TotalAmount), 1)
+                    ), 0)) * 100.0 / ISNULL(SUM({invoice_amount_expr}), 1)
                 )
             END AS value
             FROM {invoice_table} i
@@ -149,13 +146,13 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         description="Percentage of invoiced amount collected",
         query_template="""
             SELECT CASE 
-                WHEN ISNULL((SELECT SUM(TotalAmount) FROM {invoice_table} 
+                WHEN ISNULL((SELECT SUM({invoice_amount_expr}) FROM {invoice_table} 
                              WHERE {date_column} BETWEEN :start_date AND :end_date), 0) = 0 THEN 0
                 ELSE (
-                    ISNULL((SELECT SUM(Amount) FROM {receipt_table} 
+                    ISNULL((SELECT SUM({receipt_amount_expr}) FROM {receipt_table} 
                             WHERE {receipt_date_column} BETWEEN :start_date AND :end_date), 0)
                     * 100.0 / 
-                    ISNULL((SELECT SUM(TotalAmount) FROM {invoice_table} 
+                    ISNULL((SELECT SUM({invoice_amount_expr}) FROM {invoice_table} 
                             WHERE {date_column} BETWEEN :start_date AND :end_date), 1)
                 )
             END AS value
@@ -172,9 +169,9 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         unit="currency",
         description="Total amount owed by customers",
         query_template="""
-            SELECT ISNULL(SUM(BalanceDue), 0) AS value
+            SELECT ISNULL(SUM({balance_amount_expr}), 0) AS value
             FROM {invoice_table}
-            WHERE BalanceDue > 0
+            WHERE {balance_amount_expr} > 0
         """,
         higher_is_better=False,
         health_weight=0.05,
@@ -204,13 +201,13 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
         description="Total expenses as percentage of revenue",
         query_template="""
             SELECT CASE 
-                WHEN ISNULL((SELECT SUM(TotalAmount) FROM {invoice_table} 
+                WHEN ISNULL((SELECT SUM({invoice_amount_expr}) FROM {invoice_table} 
                              WHERE {date_column} BETWEEN :start_date AND :end_date), 0) = 0 THEN 0
                 ELSE (
-                    ISNULL((SELECT SUM(Amount) FROM {expense_table} 
+                    ISNULL((SELECT SUM({expense_amount_expr}) FROM {expense_table} 
                             WHERE {expense_date_column} BETWEEN :start_date AND :end_date), 0)
                     * 100.0 / 
-                    ISNULL((SELECT SUM(TotalAmount) FROM {invoice_table} 
+                    ISNULL((SELECT SUM({invoice_amount_expr}) FROM {invoice_table} 
                             WHERE {date_column} BETWEEN :start_date AND :end_date), 1)
                 )
             END AS value
@@ -237,26 +234,47 @@ METRIC_DEFINITIONS: dict[str, MetricDefinition] = {
 }
 
 
-# ── Table Mapping Configuration ──────────────────────────────────────────────
-# These are default mappings that get overridden by database discovery
+# ── Table & Column Mapping Configuration ─────────────────────────────────────
 
 @dataclass
 class TableMapping:
-    """Maps business concepts to actual SQL table/column names."""
+    """Maps business concepts to actual SQL table/column names with currency handling."""
     invoice_table: str = "tblInvoice"
+    invoice_amount_col: str = "TotalAmount"
+    balance_amount_col: str = "BalanceDue"
     date_column: str = "InvoiceDate"
+
     receipt_table: str = "tblReceipt"
+    receipt_amount_col: str = "Amount"
     receipt_date_column: str = "ReceiptDate"
+
     expense_table: str = "tblExpense"
+    expense_amount_col: str = "Amount"
     expense_date_column: str = "ExpenseDate"
+
     withdrawal_table: str = "tblWithdrawal"
+    withdrawal_amount_col: str = "Amount"
     withdrawal_date_column: str = "WithdrawalDate"
+
     customer_table: str = "tblCustomer"
     job_table: str = "tblJob"
     branch_table: str = "tblBranch"
 
+    @staticmethod
+    def safe_numeric_expr(column_name: str) -> str:
+        """
+        Generates a T-SQL expression to safely convert amount columns that
+        may contain currency codes (GHS, $, EUR, USD), commas, or spaces to DECIMAL(18,2).
+        """
+        return (
+            f"TRY_CAST("
+            f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+            f"CAST({column_name} AS NVARCHAR(MAX)), 'GHS', ''), '$', ''), 'EUR', ''), 'USD', ''), ',', '') "
+            f"AS DECIMAL(18, 2))"
+        )
+
     def apply_to_query(self, query_template: str) -> str:
-        """Replace placeholders in a query template with actual table/column names."""
+        """Replace placeholders in a query template with actual table/column names and safe numeric expressions."""
         replacements = {
             "{invoice_table}": self.invoice_table,
             "{date_column}": self.date_column,
@@ -269,6 +287,11 @@ class TableMapping:
             "{customer_table}": self.customer_table,
             "{job_table}": self.job_table,
             "{branch_table}": self.branch_table,
+            "{invoice_amount_expr}": self.safe_numeric_expr(self.invoice_amount_col),
+            "{receipt_amount_expr}": self.safe_numeric_expr(self.receipt_amount_col),
+            "{expense_amount_expr}": self.safe_numeric_expr(self.expense_amount_col),
+            "{withdrawal_amount_expr}": self.safe_numeric_expr(self.withdrawal_amount_col),
+            "{balance_amount_expr}": self.safe_numeric_expr(self.balance_amount_col),
         }
         result = query_template
         for placeholder, value in replacements.items():

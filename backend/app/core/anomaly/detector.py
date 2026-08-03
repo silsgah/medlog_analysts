@@ -2,11 +2,12 @@
 AI Freight Copilot — Anomaly Detection Orchestrator.
 
 Runs all detection algorithms against business data and
-produces structured anomaly reports.
+produces structured anomaly reports. Includes safe numeric parsing for currency strings.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -20,6 +21,20 @@ from app.domain.entities import AlertSeverity, Anomaly, AnomalyType
 from app.infrastructure.database import DatabaseManager
 
 logger = structlog.get_logger(__name__)
+
+
+def parse_float(val: Any) -> float:
+    """Safely convert any value (including currency strings like 'GHS 1,500.00', '$250') to float."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    clean_s = re.sub(r"[^\d.-]", "", s.replace(",", ""))
+    try:
+        return float(clean_s) if clean_s else 0.0
+    except (ValueError, TypeError):
+        return 0.0
 
 
 class AnomalyDetector:
@@ -97,7 +112,7 @@ class AnomalyDetector:
         if result.error or not result.rows:
             return []
 
-        amounts = [float(r.get("Amount", 0)) for r in result.rows]
+        amounts = [parse_float(r.get("Amount")) for r in result.rows]
         anomalies = []
 
         # Z-Score detection on amounts
@@ -155,7 +170,7 @@ class AnomalyDetector:
         if result.error or not result.rows:
             return []
 
-        amounts = [float(r.get("Amount", 0)) for r in result.rows]
+        amounts = [parse_float(r.get("Amount")) for r in result.rows]
         anomalies = []
 
         # Rolling statistics detection
@@ -199,7 +214,7 @@ class AnomalyDetector:
         if result.error or not result.rows or len(result.rows) < 7:
             return []
 
-        revenues = [float(r.get("daily_revenue", 0)) for r in result.rows]
+        revenues = [parse_float(r.get("daily_revenue")) for r in result.rows]
         anomalies = []
 
         # Check for significant drops using rolling stats
@@ -244,20 +259,20 @@ class AnomalyDetector:
 
         anomalies = []
         for row in result.rows[:20]:  # Top 20 overdue
-            days = int(row.get("days_outstanding", 0))
+            days = parse_float(row.get("days_outstanding"))
             severity = AlertSeverity.CRITICAL if days > 90 else AlertSeverity.HIGH
             anomalies.append(Anomaly(
                 anomaly_type=AnomalyType.DELAYED_COLLECTION,
                 severity=severity,
                 metric_name="Days Outstanding",
-                current_value=float(days),
+                current_value=days,
                 expected_value=30.0,  # Standard payment terms
-                deviation=float(days - 30),
+                deviation=days - 30.0,
                 detection_method="threshold",
                 details={
                     "invoice_no": row.get("InvoiceNo", ""),
-                    "balance_due": float(row.get("BalanceDue", 0)),
-                    "total_amount": float(row.get("TotalAmount", 0)),
+                    "balance_due": parse_float(row.get("BalanceDue")),
+                    "total_amount": parse_float(row.get("TotalAmount")),
                 },
             ))
 
@@ -288,17 +303,17 @@ class AnomalyDetector:
 
         anomalies = []
         for row in result.rows:
-            count = int(row.get("occurrence_count", 0))
+            count = parse_float(row.get("occurrence_count"))
             anomalies.append(Anomaly(
                 anomaly_type=AnomalyType.DUPLICATE_PAYMENT,
                 severity=AlertSeverity.HIGH,
                 metric_name="Duplicate Payment Count",
-                current_value=float(count),
+                current_value=count,
                 expected_value=1.0,
-                deviation=float(count - 1),
+                deviation=count - 1.0,
                 detection_method="exact_match",
                 details={
-                    "amount": float(row.get("Amount", 0)),
+                    "amount": parse_float(row.get("Amount")),
                     "customer_id": str(row.get("CustomerID", "")),
                     "date": str(row.get("date", "")),
                 },
