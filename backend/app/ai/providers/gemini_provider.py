@@ -1,7 +1,7 @@
 """
 AI Freight Copilot — Google Gemini Provider.
 
-Implementation of the LLM provider for Google's Gemini API.
+Implementation of the LLM and Embedding provider for Google's Gemini API.
 """
 
 from __future__ import annotations
@@ -11,7 +11,14 @@ from typing import Any, AsyncIterator
 import structlog
 import google.generativeai as genai
 
-from app.ai.providers.base import LLMProvider, LLMResponse, Message, MessageRole
+from app.ai.providers.base import (
+    EmbeddingProvider,
+    EmbeddingResponse,
+    LLMProvider,
+    LLMResponse,
+    Message,
+    MessageRole,
+)
 from app.config import get_settings
 
 logger = structlog.get_logger(__name__)
@@ -23,7 +30,8 @@ class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         settings = get_settings()
         api_key = api_key or settings.gemini_api_key.get_secret_value()
-        genai.configure(api_key=api_key)
+        if api_key:
+            genai.configure(api_key=api_key)
         self._model_name = model or settings.gemini_model
         self._model = genai.GenerativeModel(self._model_name)
         self._default_max_tokens = settings.gemini_max_tokens
@@ -82,13 +90,23 @@ class GeminiProvider(LLMProvider):
             generation_config=generation_config,
         )
 
+        # Safely extract text content
+        text_content = ""
+        try:
+            text_content = response.text or ""
+        except (AttributeError, ValueError) as err:
+            logger.warning("Could not extract response.text directly from Gemini", error=str(err))
+            if getattr(response, "candidates", None):
+                parts = getattr(response.candidates[0].content, "parts", [])
+                text_content = "".join([getattr(p, "text", "") for p in parts if getattr(p, "text", None)])
+
         # Extract token usage
         usage_meta = getattr(response, "usage_metadata", None)
         input_tokens = getattr(usage_meta, "prompt_token_count", 0) if usage_meta else 0
         output_tokens = getattr(usage_meta, "candidates_token_count", 0) if usage_meta else 0
 
         return LLMResponse(
-            content=response.text or "",
+            content=text_content,
             model=self._model_name,
             provider=self.provider_name,
             input_tokens=input_tokens,
@@ -127,5 +145,53 @@ class GeminiProvider(LLMProvider):
         )
 
         async for chunk in response:
-            if chunk.text:
-                yield chunk.text
+            try:
+                if chunk.text:
+                    yield chunk.text
+            except (AttributeError, ValueError):
+                continue
+
+
+class GeminiEmbeddingProvider(EmbeddingProvider):
+    """Google Gemini embedding provider."""
+
+    def __init__(
+        self, api_key: str | None = None, model: str | None = None
+    ) -> None:
+        settings = get_settings()
+        api_key = api_key or settings.gemini_api_key.get_secret_value()
+        if api_key:
+            genai.configure(api_key=api_key)
+        self._model = model or "models/text-embedding-004"
+
+    @property
+    def provider_name(self) -> str:
+        return "gemini"
+
+    @property
+    def dimensions(self) -> int:
+        return 768
+
+    async def embed(
+        self,
+        texts: list[str],
+        **kwargs: Any,
+    ) -> EmbeddingResponse:
+        """Generate embeddings using Google Gemini."""
+        res = genai.embed_content(
+            model=self._model,
+            content=texts,
+            task_type="retrieval_document",
+        )
+        embeddings = res.get("embedding", [])
+        if embeddings and isinstance(embeddings[0], float):
+            embeddings = [embeddings]
+
+        return EmbeddingResponse(
+            embeddings=embeddings,
+            model=self._model,
+            provider=self.provider_name,
+            total_tokens=0,
+            dimensions=len(embeddings[0]) if embeddings else 768,
+        )
+

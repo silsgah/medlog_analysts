@@ -20,7 +20,7 @@ from app.ai.providers.base import (
 )
 from app.ai.providers.openai_provider import OpenAIEmbeddingProvider, OpenAIProvider
 from app.ai.providers.anthropic_provider import AnthropicProvider
-from app.ai.providers.gemini_provider import GeminiProvider
+from app.ai.providers.gemini_provider import GeminiEmbeddingProvider, GeminiProvider
 from app.ai.providers.vllm_provider import VLLMProvider
 from app.config import AIProvider, get_settings
 
@@ -58,18 +58,18 @@ class LLMRouter:
 
         if settings.gemini_api_key.get_secret_value():
             self._providers["gemini"] = GeminiProvider()
+            if not self._embedding_provider:
+                self._embedding_provider = GeminiEmbeddingProvider()
             logger.info("Gemini provider registered")
 
-        # vLLM is always available if configured (no API key needed)
-        if settings.vllm_base_url:
-            self._providers["vllm"] = VLLMProvider()
-            logger.info("vLLM provider registered")
-
-        # Set fallback order: default provider first, then others
+        # Set fallback order: default provider first if available, then other active providers
         default = settings.ai_default_provider.value
-        self._fallback_order = [default] + [
-            p for p in self._providers if p != default
-        ]
+        available = list(self._providers.keys())
+
+        if default in available:
+            self._fallback_order = [default] + [p for p in available if p != default]
+        else:
+            self._fallback_order = available
 
         if not self._providers:
             logger.warning("No AI providers configured — AI features will be unavailable")

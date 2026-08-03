@@ -70,7 +70,14 @@ export default function ChatPage() {
         body: JSON.stringify({ question: q }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { detail: text ? text.slice(0, 300) : `HTTP ${res.status} ${res.statusText}` };
+      }
 
       if (res.ok) {
         const insight = data.insight;
@@ -91,7 +98,7 @@ export default function ChatPage() {
         const assistantMsg: ChatMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: `⚠️ API Error: ${errorDetail}`,
+          content: `⚠️ API Error (${res.status}): ${errorDetail}`,
           error: errorDetail,
         };
         setMessages((prev) => [...prev, assistantMsg]);
@@ -151,15 +158,16 @@ export default function ChatPage() {
               ) : msg.error ? (
                 <div className="space-y-2 text-xs">
                   <div className="flex items-center gap-2 font-bold text-rose-400 text-sm">
-                    <AlertCircle className="w-4 h-4" /> AI Provider API Key Required
+                    <AlertCircle className="w-4 h-4" /> Connection or Server Error
                   </div>
                   <p className="text-gray-300 leading-relaxed">{msg.content}</p>
                   <div className="mt-3 p-3 rounded-xl bg-slate-900 border border-white/10 text-gray-400 space-y-1">
                     <p className="font-semibold text-white flex items-center gap-1.5">
-                      <Key className="w-4 h-4 text-amber-400" /> How to fix:
+                      <Key className="w-4 h-4 text-amber-400" /> Troubleshooting Guide:
                     </p>
-                    <p>1. Add <code className="text-cyan-300 font-mono">OPENAI_API_KEY</code>, <code className="text-cyan-300 font-mono">GEMINI_API_KEY</code>, or <code className="text-cyan-300 font-mono">ANTHROPIC_API_KEY</code> to your Vercel Environment Variables.</p>
-                    <p>2. Or configure your API key on the <a href="/settings" className="text-indigo-400 hover:underline font-semibold">Platform Settings</a> page.</p>
+                    <p>1. Ensure backend FastAPI server is running on <code className="text-cyan-300 font-mono">http://localhost:8000</code> (run <code className="text-cyan-300 font-mono">uvicorn app.main:app --port 8000</code> inside <code className="text-cyan-300 font-mono">backend</code> directory).</p>
+                    <p>2. Verify backend environment has <code className="text-cyan-300 font-mono">GEMINI_API_KEY</code> or <code className="text-cyan-300 font-mono">OPENAI_API_KEY</code> set in <code className="text-cyan-300 font-mono">backend/.env</code> file.</p>
+                    <p>3. If deploying on Vercel, set <code className="text-cyan-300 font-mono">NEXT_PUBLIC_API_URL</code> to point to your live backend server endpoint URL.</p>
                   </div>
                 </div>
               ) : (
